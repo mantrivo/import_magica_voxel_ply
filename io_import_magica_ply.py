@@ -1,12 +1,13 @@
 bl_info = {
     "name": "Import Magica Voxel .ply",
     "author": "mantrivo",
-    "version": (0, 9),
+    "version": (0, 9, 1),
     "blender": (2, 80, 0),
-    "location": "File > Import/Export",
+    "location": "File > Import",
     "description": "Imports a .ply File form Magica Voxel, generates a Texture and optimizes Geometry",
     "category": "Import-Export",
     "tracker_url": "https://github.com/mantrivo/import_magica_voxel_ply/issues",
+    "warning": "Packing UV Islands for complex geometry might not work. Requires ply and Images as Planes addon."
 }
 
 
@@ -40,8 +41,8 @@ def clean_node_tree(node_tree):
 
     return node_tree.nodes[0]
 
-def get_bake_material():
-    material = bpy.data.materials.new('Bake_VertexColor')
+def get_bake_material(name):
+    material = bpy.data.materials.new(name)
     material.use_nodes = True
     node_tree = material.node_tree
     out_node = clean_node_tree(node_tree)
@@ -67,12 +68,18 @@ def get_bake_material():
     texture.select = True
     node_tree.links.new(mix_rgb.inputs['Color2'], texture.outputs['Color'])
 
+    try:
+        from io_import_images_as_planes import auto_align_nodes
+        auto_align_nodes(node_tree)
+    except:
+        pass
+
     return material
 
 def get_texture_node(node_tree):
     nodes = node_tree.nodes
     result = None
-    for node in list(nodes):  # copy to avoid altering the loop's data source
+    for node in nodes:
         node.select = (node.type == 'TEX_IMAGE')
         if node.type == 'TEX_IMAGE':
             result = node
@@ -103,7 +110,7 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
     
 
     def import_magica_ply(self, context, filename, filepath):
-        if len(context.scene.objects):
+        if context.active_object:
             bpy.ops.object.mode_set(mode='OBJECT')
             bpy.ops.object.select_all(action='DESELECT')
         import_ply.load(self, context, filename)
@@ -116,31 +123,46 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         matrials_index = []
         
         
-        material = get_bake_material()
+        material = get_bake_material(obj.name)
         if len(obj.material_slots) == 0:
             mesh.materials.append(material)
         
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_all(action='SELECT')
+        print("remove_doubles")
         bpy.ops.mesh.remove_doubles()
-        bpy.ops.uv.smart_project(angle_limit=1.15, island_margin=0.0,
-                    area_weight=0.0, correct_aspect=True)
-
+        print("uv.cube_project")
+        #bpy.ops.uv.smart_project(angle_limit=1.15, island_margin=0.0,
+        #            area_weight=0.0, correct_aspect=True)
+        bpy.ops.uv.cube_project(cube_size=0.1, correct_aspect=True, clip_to_bounds=False, scale_to_bounds=False)
+        print("uv.pack_islands")
+        bpy.ops.uv.pack_islands(rotate=False, margin=0)
+        
         bpy.ops.object.mode_set(mode='OBJECT')
+        print("get dimensions")
         uv = mesh.uv_layers[0].data
+        u_min=1.0
+        for point in uv:
+            if point.uv[0] > 0.00001 and point.uv[0] < u_min:
+                u_min = point.uv[0]
+
+        width = round(1/u_min)
+        print(f"Image width:  {width} first uv.u: {u_min}")
         v_min=1.0
         for point in uv:
-            if point.uv[1] > 0 and point.uv[1] < v_min:
+            if point.uv[1] > 0.00001 and point.uv[1] < v_min:
                 v_min = point.uv[1]
 
-        width = round(1/v_min)
-        img = bpy.data.images.new(obj.name + '_diffuse', width=width, height = width)
+        height = round(1/v_min)
+        print(f"Image height: {height} first uv.v: {v_min}")
+        img = bpy.data.images.new(obj.name + '_diffuse', width=width, height=height)
         texture_node = get_texture_node(material.node_tree)
         texture_node.image = img
 
         context.scene.render.engine = "CYCLES"
         imagefilepath = os.path.join(filepath, obj.name + "_diffuse.png")
         img.filepath = imagefilepath
+        print("bake vertex color to image")
         bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
                     filepath=imagefilepath, save_mode='EXTERNAL',
                     width=width, height=width, margin=0,
@@ -150,6 +172,7 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
                     use_cage=True, use_split_materials=False,
                     use_automatic_name=False)
         if self.use_modifieres:
+            print("adding Modifiers")
             decimate = obj.modifiers.new('Decimate', 'DECIMATE')
             decimate.decimate_type = "DISSOLVE"
             decimate.delimit = {'UV'}
@@ -157,11 +180,17 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
             decimate = obj.modifiers.new('Triangulate', 'TRIANGULATE')
         else:
             bpy.ops.object.mode_set(mode='EDIT')
+            print("mesh.dissolve_limited")
             bpy.ops.mesh.dissolve_limited(delimit={'UV'})
+            print("mesh.vert_connect_concave")
+            bpy.ops.mesh.vert_connect_concave()
+            print("mesh.quads_convert_to_tris")
             bpy.ops.mesh.quads_convert_to_tris(quad_method='BEAUTY', ngon_method='BEAUTY')
 
         if self.use_save_texture:
+            print("saving Texture: " + imagefilepath)
             img.save()
+        print("done")
         bpy.ops.object.mode_set(mode='OBJECT')
 
     def execute(self, context):
