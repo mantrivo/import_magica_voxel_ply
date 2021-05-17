@@ -165,7 +165,7 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         print("bake vertex color to image")
         bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
                     filepath=imagefilepath, save_mode='EXTERNAL',
-                    width=width, height=width, margin=0,
+                    width=width, height=height, margin=0,
                     use_selected_to_active=False, max_ray_distance=0.2,
                     cage_extrusion=0.2, normal_space='TANGENT',
                     target='IMAGE_TEXTURES', use_clear=True,
