@@ -11,7 +11,7 @@ Rightclick > Save As to download the addon
 - Generates a Texture with Cycles Baking
 - Optimizes Geometry (Limited Dissolve, Triangulate via Modifiers or Operators)
 
-**Important:** Importing Geometry with many small faces will not work as the
-Pack Islands Operator in Blender will take really long. (eg dont ty to load
+**Important:** Importing Geometry with many isolated planar sections will not work as the
+Pack Islands Operator in Blender will take really long. (eg dont try to load
 the meneger example of magica Voxel (1/4 of meneger takes >15min, the whole
 likely more than 2h), the monu examples work fine (~10s))
