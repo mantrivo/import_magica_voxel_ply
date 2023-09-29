@@ -1,6 +1,7 @@
 # Magica Voxel .ply Importer Addon for Blender
 
 [Download for Blender 3.5 and above](https://github.com/mantrivo/import_magica_voxel_ply/raw/main/io_import_magica_ply.py)
+
 [Download for Blender 3.4 and below](https://raw.githubusercontent.com/mantrivo/import_magica_voxel_ply/4afaf9619c9e899d23d5470b0ac4b04c77366b3c/io_import_magica_ply.py)
 
 Rightclick > Save As to download the addon
