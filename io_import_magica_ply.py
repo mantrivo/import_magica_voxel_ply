@@ -1,13 +1,12 @@
 bl_info = {
     "name": "Import Magica Voxel .ply",
     "author": "mantrivo",
-    "version": (0, 9, 1),
-    "blender": (2, 80, 0),
+    "version": (0, 9, 2),
+    "blender": (3, 5, 0),
     "location": "File > Import",
     "description": "Imports a .ply File form Magica Voxel, generates a Texture and optimizes Geometry",
     "category": "Import-Export",
     "tracker_url": "https://github.com/mantrivo/import_magica_voxel_ply/issues",
-    "warning": "Packing UV Islands for complex geometry might not work. Requires ply and Images as Planes addon."
 }
 
 
@@ -16,7 +15,6 @@ from bpy.types import Operator
 from bpy.props import StringProperty, BoolProperty, CollectionProperty
 from bpy_extras.io_utils import ImportHelper
 import os
-from io_mesh_ply import import_ply
 
 
 def ensure_mat(color, color_hex):
@@ -104,7 +102,7 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
 
     directory: StringProperty()
 
-    use_modifieres: BoolProperty(default=True, name="Use Modifiers")
+    use_modifieres: BoolProperty(default=False, name="Use Modifiers")
 
     use_save_texture: BoolProperty(default=False, name="Save Textures")
     
@@ -113,7 +111,9 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         if context.active_object:
             bpy.ops.object.mode_set(mode='OBJECT')
             bpy.ops.object.select_all(action='DESELECT')
-        import_ply.load(self, context, filename)
+        bpy.ops.import_mesh.ply(filepath=filename, hide_props_region=True)
+        bpy.ops.object.shade_flat()
+        #import_ply.load(self, context, filename)
         
         obj = context.active_object
         mesh = obj.data
@@ -146,27 +146,41 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         bpy.ops.uv.cube_project(cube_size=0.1, correct_aspect=True, clip_to_bounds=False, scale_to_bounds=False)
         print("uv.pack_islands")
         bpy.ops.uv.pack_islands(rotate=False, margin=0)
+        
         print("remove_doubles again")
         bpy.ops.mesh.remove_doubles(threshold=0.0001, use_unselected=False, use_sharp_edge_from_normals=False)
         
-        bpy.ops.object.mode_set(mode='OBJECT')
         print("get dimensions")
-        uv = mesh.uv_layers[0].data
-        u_min=1.0
-        for point in uv:
-            if point.uv[0] > 0.00001 and point.uv[0] < u_min:
-                u_min = point.uv[0]
-
-        width = round(1/u_min)
-        print(f"Image width:  {width} first uv.u: {u_min}")
-        v_min=1.0
-        for point in uv:
-            if point.uv[1] > 0.00001 and point.uv[1] < v_min:
-                v_min = point.uv[1]
-
-        height = round(1/v_min)
-        print(f"Image height: {height} first uv.v: {v_min}")
-        img = bpy.data.images.new(obj.name + '_diffuse', width=width, height=height)
+        bpy.ops.object.mode_set(mode='OBJECT')
+        
+        uv_layer = obj.data.uv_layers.active
+        face = obj.data.polygons[0]
+        v1= uv_layer.data[face.loop_indices[0]].uv
+        v2= uv_layer.data[face.loop_indices[1]].uv
+        v_diff = v2-v1
+        length = v_diff.length
+        width=round(1/v_diff.length)
+        # move uvs to pixels
+        x_max=0
+        y_max=0
+        for face in obj.data.polygons:
+            for loop_idx in face.loop_indices:
+                point = uv_layer.data[loop_idx]
+                point.uv.x = point.uv.x // length
+                x_max = max(x_max, point.uv.x)
+                point.uv.y = point.uv.y // length
+                y_max = max(y_max,point.uv.y)
+        texture_width = int(max(x_max,y_max))
+        # scale uv to uv-Space
+        for face in obj.data.polygons:
+            for loop_idx in face.loop_indices:
+                point = uv_layer.data[loop_idx]
+                point.uv.x = point.uv.x / texture_width
+                point.uv.y = point.uv.y / texture_width
+        
+        print(f"Image size: {texture_width} x {texture_width}")
+        
+        img = bpy.data.images.new(obj.name + '_diffuse', width=texture_width, height=texture_width)
         texture_node = get_texture_node(material.node_tree)
         texture_node.image = img
 
@@ -176,7 +190,7 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         print("bake vertex color to image")
         bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
                     filepath=imagefilepath, save_mode='EXTERNAL',
-                    width=width, height=height, margin=0,
+                    width=texture_width, height=texture_width, margin=0,
                     use_selected_to_active=False, max_ray_distance=0.2,
                     cage_extrusion=0.2, normal_space='TANGENT',
                     target='IMAGE_TEXTURES', use_clear=True,
