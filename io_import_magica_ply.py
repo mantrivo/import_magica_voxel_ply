@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Import Magica Voxel .ply",
     "author": "mantrivo",
-    "version": (0, 9, 2),
+    "version": (0, 9, 3),
     "blender": (3, 5, 0),
     "location": "File > Import",
     "description": "Imports a .ply File form Magica Voxel, generates a Texture and optimizes Geometry",
@@ -12,7 +12,7 @@ bl_info = {
 
 import bpy
 from bpy.types import Operator
-from bpy.props import StringProperty, BoolProperty, CollectionProperty
+from bpy.props import StringProperty, BoolProperty, CollectionProperty, EnumProperty
 from bpy_extras.io_utils import ImportHelper
 import os
 
@@ -84,6 +84,39 @@ def get_texture_node(node_tree):
 
     return result
 
+def assign_mat_per_color(obj):
+    mesh = obj.data
+    col = mesh.vertex_colors[0].data
+    colors = []
+    colors_hex = []
+    matrials_index = []
+    for f in mesh.polygons:
+        vert_id = f.vertices[0]
+        color = list(col[vert_id].color)
+        try:
+            color_index= colors.index(color)
+            f.material_index = matrials_index[color_index]
+        except:
+            colors.append(color)
+            color_index= colors.index(color)
+            color_hex = f'Vox.{round(color[0]*255):02X}{round(color[1]*255):02X}{round(color[2]*255):02X}{round(color[3]*255):02X}'
+            colors_hex.append(color_hex)
+            mat = ensure_mat(color, color_hex)
+            found=False
+            for slot_index in range(len(obj.material_slots)):
+                slot = obj.material_slots[slot_index]
+                if slot.material:
+                    if slot.material == mat:
+                        found = True
+                        matrials_index.append(slot_index)
+                        f.material_index = slot_index
+                        break
+            if not found:
+                mesh.materials.append(mat)
+                matrials_index.append(len(obj.material_slots)-1)
+                f.material_index = len(obj.material_slots)-1
+
+
 
 class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
     """Create a new Mesh Object"""
@@ -101,6 +134,16 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
     )
 
     directory: StringProperty()
+
+    color_type: EnumProperty(
+            name="Colors",
+            items=(("texture", 'Texture', "Convert Colors to Texture"),
+                   #("vertexcolor", 'Vertex Color', "Import Colors as Vertex Colors"),
+                   ("materials", 'Materials', "Generate Material for each Color"),
+                   ),
+            description="Import Color Options",
+            default='texture',
+            )
 
     use_modifieres: BoolProperty(default=False, name="Use Modifiers")
 
@@ -121,11 +164,14 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         colors = []
         colors_hex = []
         matrials_index = []
+        material = None
         
-        
-        material = get_bake_material(obj.name)
-        if len(obj.material_slots) == 0:
-            mesh.materials.append(material)
+        if self.color_type == "texture":
+            material = get_bake_material(obj.name)
+            if len(obj.material_slots) == 0:
+                mesh.materials.append(material)
+        elif self.color_type == "materials":
+            assign_mat_per_color(obj)
         
         bpy.ops.object.mode_set(mode='EDIT')
         bpy.ops.mesh.select_all(action='SELECT')
@@ -150,63 +196,65 @@ class IMPORT_MAGICA_PLY_OT(Operator, ImportHelper):
         print("remove_doubles again")
         bpy.ops.mesh.remove_doubles(threshold=0.0001, use_unselected=False, use_sharp_edge_from_normals=False)
         
-        print("get dimensions")
-        bpy.ops.object.mode_set(mode='OBJECT')
-        
-        uv_layer = obj.data.uv_layers.active
-        face = obj.data.polygons[0]
-        v1= uv_layer.data[face.loop_indices[0]].uv
-        v2= uv_layer.data[face.loop_indices[1]].uv
-        v_diff = v2-v1
-        length = v_diff.length
-        width=round(1/v_diff.length)
-        # move uvs to pixels
-        x_max=0
-        y_max=0
-        for face in obj.data.polygons:
-            for loop_idx in face.loop_indices:
-                point = uv_layer.data[loop_idx]
-                point.uv.x = point.uv.x // length
-                x_max = max(x_max, point.uv.x)
-                point.uv.y = point.uv.y // length
-                y_max = max(y_max,point.uv.y)
-        texture_width = int(max(x_max,y_max))
-        # scale uv to uv-Space
-        for face in obj.data.polygons:
-            for loop_idx in face.loop_indices:
-                point = uv_layer.data[loop_idx]
-                point.uv.x = point.uv.x / texture_width
-                point.uv.y = point.uv.y / texture_width
-        
-        print(f"Image size: {texture_width} x {texture_width}")
-        
-        img = bpy.data.images.new(obj.name + '_diffuse', width=texture_width, height=texture_width)
-        texture_node = get_texture_node(material.node_tree)
-        texture_node.image = img
+        if self.color_type == "texture":
+            print("get dimensions")
+            bpy.ops.object.mode_set(mode='OBJECT')
+            
+            uv_layer = obj.data.uv_layers.active
+            face = obj.data.polygons[0]
+            v1= uv_layer.data[face.loop_indices[0]].uv
+            v2= uv_layer.data[face.loop_indices[1]].uv
+            v_diff = v2-v1
+            length = v_diff.length
+            width=round(1/v_diff.length)
+            # move uvs to pixels
+            x_max=0
+            y_max=0
+            for face in obj.data.polygons:
+                for loop_idx in face.loop_indices:
+                    point = uv_layer.data[loop_idx]
+                    point.uv.x = point.uv.x // length
+                    x_max = max(x_max, point.uv.x)
+                    point.uv.y = point.uv.y // length
+                    y_max = max(y_max,point.uv.y)
+            texture_width = int(max(x_max,y_max))
+            # scale uv to uv-Space
+            for face in obj.data.polygons:
+                for loop_idx in face.loop_indices:
+                    point = uv_layer.data[loop_idx]
+                    point.uv.x = point.uv.x / texture_width
+                    point.uv.y = point.uv.y / texture_width
+            
+            print(f"Image size: {texture_width} x {texture_width}")
+            
+            
+            img = bpy.data.images.new(obj.name + '_diffuse', width=texture_width, height=texture_width)
+            texture_node = get_texture_node(material.node_tree)
+            texture_node.image = img
 
-        context.scene.render.engine = "CYCLES"
-        imagefilepath = os.path.join(filepath, obj.name + "_diffuse.png")
-        img.filepath = imagefilepath
-        print("bake vertex color to image")
-        bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
-                    filepath=imagefilepath, save_mode='EXTERNAL',
-                    width=texture_width, height=texture_width, margin=0,
-                    use_selected_to_active=False, max_ray_distance=0.2,
-                    cage_extrusion=0.2, normal_space='TANGENT',
-                    target='IMAGE_TEXTURES', use_clear=True,
-                    use_cage=True, use_split_materials=False,
-                    use_automatic_name=False)
+            context.scene.render.engine = "CYCLES"
+            imagefilepath = os.path.join(filepath, obj.name + "_diffuse.png")
+            img.filepath = imagefilepath
+            print("bake vertex color to image")
+            bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
+                        filepath=imagefilepath, save_mode='EXTERNAL',
+                        width=texture_width, height=texture_width, margin=0,
+                        use_selected_to_active=False, max_ray_distance=0.2,
+                        cage_extrusion=0.2, normal_space='TANGENT',
+                        target='IMAGE_TEXTURES', use_clear=True,
+                        use_cage=True, use_split_materials=False,
+                        use_automatic_name=False)
         if self.use_modifieres:
             print("adding Modifiers")
             decimate = obj.modifiers.new('Decimate', 'DECIMATE')
             decimate.decimate_type = "DISSOLVE"
-            decimate.delimit = {'UV'}
+            decimate.delimit = {'NORMAL', 'UV', 'MATERIAL'}
             
             decimate = obj.modifiers.new('Triangulate', 'TRIANGULATE')
         else:
             bpy.ops.object.mode_set(mode='EDIT')
             print("mesh.dissolve_limited")
-            bpy.ops.mesh.dissolve_limited(delimit={'UV'})
+            bpy.ops.mesh.dissolve_limited(delimit={'NORMAL', 'UV', 'MATERIAL'})
             print("mesh.vert_connect_concave")
             bpy.ops.mesh.vert_connect_concave()
             print("mesh.quads_convert_to_tris")
